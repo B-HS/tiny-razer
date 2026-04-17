@@ -22,7 +22,8 @@ struct TinyRazerApp: App {
         Window("Tiny Razer", id: "tinyRazerSettings") {
             SettingsScene(
                 manager: appDelegate.deviceManager,
-                preferences: appDelegate.fieldPreferences
+                preferences: appDelegate.fieldPreferences,
+                launchAtLogin: appDelegate.launchAtLogin
             )
         }
         .windowStyle(.hiddenTitleBar)

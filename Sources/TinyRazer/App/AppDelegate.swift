@@ -4,6 +4,7 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let deviceManager = DeviceManager()
     let fieldPreferences = FieldPreferences()
+    let launchAtLogin = LaunchAtLogin()
 
     nonisolated func applicationDidFinishLaunching(_ notification: Notification) {
         Task { @MainActor in

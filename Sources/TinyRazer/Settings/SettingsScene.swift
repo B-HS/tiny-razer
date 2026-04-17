@@ -1,10 +1,16 @@
 import SwiftUI
 import RazerKit
 
+enum SettingsSelection: Hashable {
+    case general
+    case device(UInt64)
+}
+
 struct SettingsScene: View {
     @Bindable var manager: DeviceManager
     @Bindable var preferences: FieldPreferences
-    @State private var selectedDeviceID: UInt64?
+    @Bindable var launchAtLogin: LaunchAtLogin
+    @State private var selection: SettingsSelection = .general
 
     var body: some View {
         HStack(spacing: 0) {
@@ -21,72 +27,120 @@ struct SettingsScene: View {
         .frame(minWidth: 680, minHeight: 440)
         .ignoresSafeArea()
         .onChange(of: manager.devices.map(\.id)) { _, ids in
-            if selectedDeviceID == nil || !ids.contains(selectedDeviceID!) {
-                selectedDeviceID = ids.first
+            if case .device(let id) = selection, !ids.contains(id) {
+                selection = .general
             }
         }
     }
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Title lives in the sidebar itself, flush with the traffic lights.
-            HStack {
-                Text("Devices")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .textCase(.uppercase)
-                    .tracking(0.5)
-                Spacer()
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 36)   // leave space for window traffic lights
-            .padding(.bottom, 8)
+            Color.clear.frame(height: 36) // traffic-light clearance
 
-            ScrollView {
-                VStack(spacing: 2) {
-                    if manager.devices.isEmpty {
-                        HStack(spacing: 8) {
-                            Image(systemName: "computermouse")
-                                .foregroundStyle(.secondary)
-                            Text("No devices")
-                                .foregroundStyle(.secondary)
-                        }
-                        .font(.callout)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                    } else {
-                        ForEach(manager.devices) { state in
-                            SidebarRow(state: state, isSelected: state.id == selectedDeviceID)
-                                .contentShape(Rectangle())
-                                .onTapGesture {
-                                    selectedDeviceID = state.id
-                                }
-                        }
+            sidebarSection(title: "App") {
+                sidebarButton(
+                    label: "General",
+                    systemImage: "gearshape.fill",
+                    tint: .accentColor,
+                    isSelected: selection == .general,
+                    action: { selection = .general }
+                )
+            }
+
+            sidebarSection(title: "Devices") {
+                if manager.devices.isEmpty {
+                    HStack(spacing: 8) {
+                        Image(systemName: "computermouse")
+                            .foregroundStyle(.secondary)
+                        Text("No devices")
+                            .foregroundStyle(.secondary)
+                    }
+                    .font(.callout)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                } else {
+                    ForEach(manager.devices) { state in
+                        DeviceSidebarRow(
+                            state: state,
+                            isSelected: selection == .device(state.id)
+                        )
+                        .contentShape(Rectangle())
+                        .onTapGesture { selection = .device(state.id) }
                     }
                 }
-                .padding(.horizontal, 8)
             }
+
             Spacer()
         }
     }
 
+    private func sidebarSection<Content: View>(
+        title: String,
+        @ViewBuilder content: () -> Content,
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(title.uppercased())
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .tracking(0.5)
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .padding(.bottom, 6)
+            VStack(spacing: 2) {
+                content()
+            }
+            .padding(.horizontal, 8)
+        }
+    }
+
+    private func sidebarButton(
+        label: String,
+        systemImage: String,
+        tint: Color,
+        isSelected: Bool,
+        action: @escaping () -> Void,
+    ) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: systemImage)
+                .font(.system(size: 13))
+                .foregroundStyle(isSelected ? .white : tint)
+                .frame(width: 20)
+            Text(label)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(isSelected ? .white : .primary)
+            Spacer()
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: DS.Radius.sm)
+                .fill(isSelected ? Color.accentColor : Color.clear)
+        )
+        .contentShape(Rectangle())
+        .onTapGesture(perform: action)
+    }
+
     @ViewBuilder private var detail: some View {
-        if let id = selectedDeviceID,
-           let state = manager.devices.first(where: { $0.id == id }) {
-            DeviceDetail(state: state, manager: manager, preferences: preferences)
-        } else {
-            ContentUnavailableView(
-                "Select a device",
-                systemImage: "computermouse",
-                description: Text("Plug in a Razer device, then select it in the sidebar.")
-            )
+        switch selection {
+        case .general:
+            GeneralSettingsView(launchAtLogin: launchAtLogin)
+        case .device(let id):
+            if let state = manager.devices.first(where: { $0.id == id }) {
+                DeviceDetail(state: state, manager: manager, preferences: preferences)
+            } else {
+                ContentUnavailableView(
+                    "Device disconnected",
+                    systemImage: "cable.connector.slash",
+                    description: Text("Reconnect the device or pick another entry in the sidebar.")
+                )
+            }
         }
     }
 }
 
 // MARK: - Sidebar row
 
-private struct SidebarRow: View {
+private struct DeviceSidebarRow: View {
     let state: DeviceState
     let isSelected: Bool
 
@@ -145,22 +199,28 @@ private struct DeviceDetail: View {
             VStack(alignment: .leading, spacing: DS.Spacing.md) {
                 compactHero
 
-                if visible(.dpi), state.device.supports(.dpi) {
-                    dpiCard
-                }
-
-                if visible(.pollingRate), state.device.supports(.pollingRate) {
-                    pollingCard
-                }
-
                 if visible(.battery), state.device.supports(.battery) {
                     batteryCard
                 }
 
-                fieldsVisibilityCard
+                if visible(.dpi), state.device.supports(.dpi) {
+                    dpiCard
+                }
+
+                // Polling rate + Fields visibility share a row on wide windows.
+                let showPolling = visible(.pollingRate) && state.device.supports(.pollingRate)
+                HStack(alignment: .top, spacing: DS.Spacing.md) {
+                    if showPolling {
+                        pollingCard
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                    fieldsVisibilityCard
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                .fixedSize(horizontal: false, vertical: true)
             }
             .padding(.horizontal, DS.Spacing.lg)
-            .padding(.top, DS.Spacing.md)   // traffic lights live over the sidebar, not here
+            .padding(.top, DS.Spacing.md)
             .padding(.bottom, DS.Spacing.lg)
             .frame(maxWidth: .infinity, alignment: .leading)
         }

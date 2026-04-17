@@ -32,6 +32,7 @@ struct Card<Content: View>: View {
 
     var body: some View {
         content
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(DS.Spacing.md)
             .background(DS.Palette.cardBackground)
             .overlay(
