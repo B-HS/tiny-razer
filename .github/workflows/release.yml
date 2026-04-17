@@ -1,0 +1,145 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+      - '.github/workflows/ci.yml'
+  workflow_dispatch:
+    inputs:
+      version_bump:
+        description: 'Version bump type'
+        required: false
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build & Release
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
+
+      - name: Compute next version
+        id: version
+        run: |
+          git fetch --tags --force
+          LATEST=$(git tag --list 'v*' --sort=-v:refname | head -n1)
+          BUMP="${{ github.event.inputs.version_bump || 'patch' }}"
+
+          if [ -z "$LATEST" ]; then
+            NEXT="v0.1.0"
+          else
+            MAJOR=$(echo "$LATEST" | sed -E 's/^v([0-9]+)\.([0-9]+)\.([0-9]+).*/\1/')
+            MINOR=$(echo "$LATEST" | sed -E 's/^v([0-9]+)\.([0-9]+)\.([0-9]+).*/\2/')
+            PATCH=$(echo "$LATEST" | sed -E 's/^v([0-9]+)\.([0-9]+)\.([0-9]+).*/\3/')
+            case "$BUMP" in
+              major) MAJOR=$((MAJOR+1)); MINOR=0; PATCH=0 ;;
+              minor) MINOR=$((MINOR+1)); PATCH=0 ;;
+              *) PATCH=$((PATCH+1)) ;;
+            esac
+            NEXT="v${MAJOR}.${MINOR}.${PATCH}"
+          fi
+
+          echo "previous=$LATEST" >> "$GITHUB_OUTPUT"
+          echo "next=$NEXT" >> "$GITHUB_OUTPUT"
+          echo "short=${NEXT#v}" >> "$GITHUB_OUTPUT"
+          echo "Previous: $LATEST"
+          echo "Next:     $NEXT"
+
+      - name: Cache SPM
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: ${{ runner.os }}-spm-${{ hashFiles('Package.resolved', 'Package.swift') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-
+
+      - name: Run tests
+        run: swift test
+
+      - name: Build .app bundle
+        run: |
+          ./build-app.sh release
+
+      - name: Stamp version into Info.plist
+        run: |
+          APP=".build/Tiny Razer.app"
+          plutil -replace CFBundleShortVersionString -string "${{ steps.version.outputs.short }}" "$APP/Contents/Info.plist"
+          plutil -replace CFBundleVersion -string "${{ github.run_number }}" "$APP/Contents/Info.plist"
+          codesign --force --deep --sign - "$APP"
+
+      - name: Package .zip
+        id: package
+        run: |
+          cd .build
+          ditto -c -k --keepParent "Tiny Razer.app" "TinyRazer-${{ steps.version.outputs.next }}.zip"
+          echo "path=.build/TinyRazer-${{ steps.version.outputs.next }}.zip" >> "$GITHUB_OUTPUT"
+          shasum -a 256 "TinyRazer-${{ steps.version.outputs.next }}.zip" > "TinyRazer-${{ steps.version.outputs.next }}.zip.sha256"
+
+      - name: Create tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.version.outputs.next }}" -m "Release ${{ steps.version.outputs.next }}"
+          git push origin "${{ steps.version.outputs.next }}"
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          PREV="${{ steps.version.outputs.previous }}"
+          if [ -z "$PREV" ]; then
+            LOG=$(git log --pretty=format:'- %s (%h)' --reverse)
+          else
+            LOG=$(git log "$PREV"..HEAD --pretty=format:'- %s (%h)' --reverse)
+          fi
+          {
+            echo "body<<EOF"
+            echo "### Changes"
+            echo ""
+            echo "$LOG"
+            echo ""
+            echo "### Artifacts"
+            echo ""
+            echo "- \`TinyRazer-${{ steps.version.outputs.next }}.zip\` — ad-hoc signed macOS .app bundle"
+            echo "- \`.sha256\` — checksum"
+            echo ""
+            echo "### Installation"
+            echo ""
+            echo "1. Download and unzip"
+            echo "2. Move \`Tiny Razer.app\` to \`/Applications\`"
+            echo "3. Right-click → Open (first launch only, to bypass Gatekeeper)"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.next }}
+          name: ${{ steps.version.outputs.next }}
+          body: ${{ steps.changelog.outputs.body }}
+          draft: false
+          prerelease: false
+          files: |
+            .build/TinyRazer-${{ steps.version.outputs.next }}.zip
+            .build/TinyRazer-${{ steps.version.outputs.next }}.zip.sha256

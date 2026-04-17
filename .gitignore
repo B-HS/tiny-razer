@@ -1,0 +1,83 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+.TemporaryItems
+.apdisk
+
+# Windows artefacts accidentally copied
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Packages/
+Package.pins
+
+# Xcode
+*.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+DerivedData/
+build/
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+xcuserdata/
+*.xccheckout
+*.xcscmblueprint
+*.moved-aside
+*.xcuserstate
+*.hmap
+
+# Build artefacts
+*.ipa
+*.app
+*.app.zip
+*.dSYM
+*.dSYM.zip
+*.dmg
+*.pkg
+
+# Node / bun (for scripts/)
+node_modules/
+*.tsbuildinfo
+
+# Editors
+.claude/
+.cursor/
+.aider*
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.orig
+*.rej
+*.bak
+*.tmp
+
+# Secrets
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.cer
+*.mobileprovision
+*.provisionprofile
+ExportOptions.plist
+.netrc
+
+# Logs / diagnostics
+*.log
+*.xcresult
+crash*.log
