@@ -159,6 +159,174 @@ public enum MiscCommands {
     public static func parseChargingStatus(_ response: RazerReport) -> Bool {
         response.argument(at: 1) != 0
     }
+
+    // MARK: - Firmware / serial (standard class 0x00)
+
+    /// Read firmware version — response carries major at arg[0], minor at arg[1].
+    /// Source: razer_chroma_standard_get_firmware_version, razerchromacommon.c:67.
+    public static func getFirmwareVersion() -> RazerReport {
+        RazerReport(
+            commandClass: 0x00,
+            commandID: CommandID(direction: .get, id: 0x01),
+            dataSize: 0x02
+        )
+    }
+
+    public static func parseFirmwareVersion(_ response: RazerReport) -> String {
+        "v\(response.argument(at: 0)).\(response.argument(at: 1))"
+    }
+
+    /// Read serial number — 22 ASCII bytes at arg[0..<22].
+    /// Source: razer_chroma_standard_get_serial, razerchromacommon.c:59.
+    public static func getSerialNumber() -> RazerReport {
+        RazerReport(
+            commandClass: 0x00,
+            commandID: CommandID(direction: .get, id: 0x02),
+            dataSize: 0x16
+        )
+    }
+
+    public static func parseSerialNumber(_ response: RazerReport) -> String {
+        let bytes = response.argumentsSlice(count: 22)
+        let trimmed = bytes.prefix { $0 != 0 }
+        return String(bytes: trimmed, encoding: .ascii)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    // MARK: - DPI stages (class 0x04)
+
+    /// Read DPI stage configuration. Response holds up to 5 stages at 7 bytes each.
+    /// Source: razer_chroma_misc_get_dpi_stages, razerchromacommon.c:1317.
+    public static func getDPIStages(store: UInt8 = varStore) -> RazerReport {
+        var r = RazerReport(
+            commandClass: 0x04,
+            commandID: CommandID(direction: .get, id: 0x06),
+            dataSize: 0x26
+        )
+        r.setArgument(store, at: 0)
+        return r
+    }
+
+    /// Write DPI stages — `stages` is an array of (x, y) pairs, max 5.
+    /// `activeStage` is a 1-based index into the list.
+    /// Source: razer_chroma_misc_set_dpi_stages, razerchromacommon.c:1281.
+    public static func setDPIStages(
+        _ stages: [(x: UInt16, y: UInt16)],
+        activeStage: UInt8,
+        store: UInt8 = varStore
+    ) -> RazerReport {
+        precondition(stages.count <= 5, "max 5 DPI stages")
+        var r = RazerReport(
+            commandClass: 0x04,
+            commandID: CommandID(direction: .set, id: 0x06),
+            dataSize: 0x26
+        )
+        r.setArgument(store, at: 0)
+        r.setArgument(activeStage, at: 1)
+        r.setArgument(UInt8(stages.count), at: 2)
+
+        var offset = 3
+        for (i, stage) in stages.enumerated() {
+            let x = min(max(stage.x, 100), 45_000)
+            let y = min(max(stage.y, 100), 45_000)
+            r.setArgument(UInt8(i), at: offset); offset += 1
+            r.setArgument(UInt8(truncatingIfNeeded: x >> 8), at: offset); offset += 1
+            r.setArgument(UInt8(truncatingIfNeeded: x), at: offset); offset += 1
+            r.setArgument(UInt8(truncatingIfNeeded: y >> 8), at: offset); offset += 1
+            r.setArgument(UInt8(truncatingIfNeeded: y), at: offset); offset += 1
+            offset += 2 // reserved
+        }
+        return r
+    }
+
+    public struct DPIStageList: Equatable, Sendable {
+        public let activeStage: UInt8
+        public let stages: [(x: UInt16, y: UInt16)]
+
+        public init(activeStage: UInt8, stages: [(x: UInt16, y: UInt16)]) {
+            self.activeStage = activeStage
+            self.stages = stages
+        }
+
+        public static func == (a: DPIStageList, b: DPIStageList) -> Bool {
+            guard a.activeStage == b.activeStage, a.stages.count == b.stages.count else { return false }
+            for i in a.stages.indices {
+                if a.stages[i].x != b.stages[i].x || a.stages[i].y != b.stages[i].y { return false }
+            }
+            return true
+        }
+    }
+
+    public static func parseDPIStages(_ response: RazerReport) -> DPIStageList {
+        let active = response.argument(at: 1)
+        let count = min(Int(response.argument(at: 2)), 5)
+        var stages: [(x: UInt16, y: UInt16)] = []
+        for i in 0..<count {
+            let offset = 3 + i * 7 + 1 // skip stage-number byte
+            let x = (UInt16(response.argument(at: offset)) << 8) | UInt16(response.argument(at: offset + 1))
+            let y = (UInt16(response.argument(at: offset + 2)) << 8) | UInt16(response.argument(at: offset + 3))
+            stages.append((x: x, y: y))
+        }
+        return DPIStageList(activeStage: active, stages: stages)
+    }
+
+    // MARK: - Idle timer (class 0x07)
+
+    /// Read wireless idle timeout (seconds before the device sleeps).
+    public static func getIdleTime() -> RazerReport {
+        RazerReport(
+            commandClass: 0x07,
+            commandID: CommandID(direction: .get, id: 0x03),
+            dataSize: 0x02
+        )
+    }
+
+    /// Set wireless idle timeout. Openrazer clamps to [60, 900] seconds.
+    public static func setIdleTime(seconds: UInt16) -> RazerReport {
+        var r = RazerReport(
+            commandClass: 0x07,
+            commandID: CommandID(direction: .set, id: 0x03),
+            dataSize: 0x02
+        )
+        let clamped = min(max(seconds, 60), 900)
+        r.setArgument(UInt8(truncatingIfNeeded: clamped >> 8), at: 0)
+        r.setArgument(UInt8(truncatingIfNeeded: clamped), at: 1)
+        return r
+    }
+
+    public static func parseIdleTime(_ response: RazerReport) -> UInt16 {
+        (UInt16(response.argument(at: 0)) << 8) | UInt16(response.argument(at: 1))
+    }
+
+    // MARK: - Low battery threshold (class 0x07)
+
+    /// Read the battery-low threshold byte. Typical values: 0x0C ≈ 5 %,
+    /// 0x26 ≈ 15 %, 0x3F ≈ 25 %.
+    public static func getLowBatteryThreshold() -> RazerReport {
+        RazerReport(
+            commandClass: 0x07,
+            commandID: CommandID(direction: .get, id: 0x01),
+            dataSize: 0x01
+        )
+    }
+
+    /// Set battery-low threshold as percent (0–100); clamped to openrazer's
+    /// supported [5 %, 25 %] band.
+    public static func setLowBatteryThreshold(percent: Int) -> RazerReport {
+        var r = RazerReport(
+            commandClass: 0x07,
+            commandID: CommandID(direction: .set, id: 0x01),
+            dataSize: 0x01
+        )
+        let raw = UInt8(clamping: Int(Double(percent) / 100.0 * 255.0))
+        let clamped = min(max(raw, 0x0C), 0x3F)
+        r.setArgument(clamped, at: 0)
+        return r
+    }
+
+    public static func parseLowBatteryThreshold(_ response: RazerReport) -> Int {
+        Int((Double(response.argument(at: 0)) / 255.0 * 100.0).rounded())
+    }
 }
 
 public enum PollingRate: Int, CaseIterable, Sendable {

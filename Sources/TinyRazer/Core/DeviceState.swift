@@ -11,6 +11,12 @@ struct DeviceState: Identifiable, Equatable {
     var dpiX: UInt16?
     var dpiY: UInt16?
     var pollingRate: PollingRate?
+    var brightness: UInt8?
+    var firmwareVersion: String?
+    var serialNumber: String?
+    var dpiStages: MiscCommands.DPIStageList?
+    var idleTimeSeconds: UInt16?
+    var lowBatteryThresholdPercent: Int?
     var lastError: String?
 
     var id: UInt64 { device.id }

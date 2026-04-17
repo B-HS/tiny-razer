@@ -76,7 +76,7 @@ struct SettingsScene: View {
 
     private func sidebarSection<Content: View>(
         title: String,
-        @ViewBuilder content: () -> Content,
+        @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(title.uppercased())
@@ -98,7 +98,7 @@ struct SettingsScene: View {
         systemImage: String,
         tint: Color,
         isSelected: Bool,
-        action: @escaping () -> Void,
+        action: @escaping () -> Void
     ) -> some View {
         HStack(spacing: 8) {
             Image(systemName: systemImage)
@@ -207,6 +207,22 @@ private struct DeviceDetail: View {
                     dpiCard
                 }
 
+                if state.device.supports(.dpiStages) {
+                    dpiStagesCard
+                }
+
+                if hasAnyLEDCapability {
+                    lightingCard
+                }
+
+                if state.device.supports(.brightness) {
+                    brightnessCard
+                }
+
+                if state.device.supports(.idleTimer) || state.device.supports(.lowBatteryThreshold) {
+                    powerCard
+                }
+
                 // Polling rate + Fields visibility share a row on wide windows.
                 let showPolling = visible(.pollingRate) && state.device.supports(.pollingRate)
                 HStack(alignment: .top, spacing: DS.Spacing.md) {
@@ -218,6 +234,8 @@ private struct DeviceDetail: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 .fixedSize(horizontal: false, vertical: true)
+
+                aboutCard
             }
             .padding(.horizontal, DS.Spacing.lg)
             .padding(.top, DS.Spacing.md)
@@ -501,6 +519,145 @@ private struct DeviceDetail: View {
 
                 Spacer()
             }
+        }
+    }
+
+    // MARK: DPI stages
+
+    private var dpiStagesCard: some View {
+        Card {
+            VStack(alignment: .leading, spacing: DS.Spacing.sm) {
+                HStack(alignment: .firstTextBaseline) {
+                    Label("DPI stages", systemImage: "dial.medium.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                    Spacer()
+                    if let stages = state.dpiStages {
+                        Text("Active: \(stages.activeStage)")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if let stages = state.dpiStages {
+                    VStack(spacing: 4) {
+                        ForEach(Array(stages.stages.enumerated()), id: \.offset) { i, stage in
+                            HStack {
+                                Text("Stage \(i + 1)")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 60, alignment: .leading)
+                                Text("\(stage.x) × \(stage.y)")
+                                    .font(.system(size: 12, design: .monospaced))
+                                Spacer()
+                                if UInt8(i + 1) == stages.activeStage {
+                                    Text("Active")
+                                        .font(.system(size: 10, weight: .medium))
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(Color.accentColor.opacity(0.15))
+                                        .foregroundStyle(Color.accentColor)
+                                        .clipShape(Capsule())
+                                } else {
+                                    Button("Activate") {
+                                        Task { await manager.setDPIStages(stages.stages, activeStage: UInt8(i + 1), for: state.id) }
+                                    }
+                                    .controlSize(.mini)
+                                    .buttonStyle(.bordered)
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    Text("Reading stages…")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                Text("Cycle through stored DPI presets using the DPI clutch button on the mouse.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    // MARK: Lighting
+
+    private var hasAnyLEDCapability: Bool {
+        state.device.supports(.rgbStatic) ||
+        state.device.supports(.rgbSpectrum) ||
+        state.device.supports(.rgbBreathe) ||
+        state.device.supports(.rgbWave) ||
+        state.device.supports(.rgbReactive) ||
+        state.device.supports(.rgbStarlight)
+    }
+
+    private var lightingCard: some View {
+        Card {
+            VStack(alignment: .leading, spacing: DS.Spacing.sm) {
+                Label("Lighting", systemImage: "light.max")
+                    .font(.system(size: 13, weight: .semibold))
+
+                LightingPicker(state: state, manager: manager)
+            }
+        }
+    }
+
+    // MARK: Brightness
+
+    private var brightnessCard: some View {
+        Card {
+            VStack(alignment: .leading, spacing: DS.Spacing.sm) {
+                HStack {
+                    Label("Brightness", systemImage: "sun.max.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                    Spacer()
+                    Text(state.brightness.map { "\(Int(Double($0) / 255.0 * 100))%" } ?? "—")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                }
+
+                BrightnessSlider(state: state, manager: manager)
+            }
+        }
+    }
+
+    // MARK: Power (idle + low battery)
+
+    private var powerCard: some View {
+        Card {
+            VStack(alignment: .leading, spacing: DS.Spacing.sm) {
+                Label("Power", systemImage: "bolt.horizontal.fill")
+                    .font(.system(size: 13, weight: .semibold))
+
+                if state.device.supports(.idleTimer) {
+                    IdleTimerRow(state: state, manager: manager)
+                }
+                if state.device.supports(.lowBatteryThreshold) {
+                    LowBatteryRow(state: state, manager: manager)
+                }
+            }
+        }
+    }
+
+    // MARK: About
+
+    private var aboutCard: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Device info", systemImage: "info.circle")
+                    .font(.system(size: 13, weight: .semibold))
+                infoRow("Firmware", value: state.firmwareVersion ?? "—")
+                infoRow("Serial", value: state.serialNumber?.isEmpty == false ? state.serialNumber! : "—")
+                infoRow("Product ID", value: String(format: "0x%04X", state.device.handle.productID))
+                infoRow("Transaction ID", value: String(format: "0x%02X", state.device.descriptor.transactionID.rawValue))
+            }
+        }
+    }
+
+    private func infoRow(_ label: String, value: String) -> some View {
+        HStack {
+            Text(label).font(.system(size: 11)).foregroundStyle(.secondary)
+            Spacer()
+            Text(value).font(.system(size: 11, design: .monospaced))
         }
     }
 

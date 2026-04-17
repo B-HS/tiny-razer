@@ -92,6 +92,27 @@ scripts/
   reset-permissions.sh       tccutil reset helper
 ```
 
+## Roadmap / not yet supported
+
+openrazer exposes a much larger feature surface than what's plumbed through today. The items below are on the roadmap but not implemented yet — contributions welcome.
+
+**Harder features**
+- Per-key RGB for keyboards (`MATRIX_DIMS` layout + custom-frame framebuffer transfer)
+- Ripple effect (real-time matrix animation in response to keypresses)
+- Hardware macros (record / store / replay on-device macros)
+- Onboard profile storage (save / load / switch profiles stored on the device)
+- Game-mode toggle (disable Win key, Alt+Tab, etc.)
+- Scroll acceleration / Basilisk smart-reel
+
+**Device-specific niche protocols**
+- ARGB channel control for Chroma accessories (strip / fan / headset stands)
+- Kraken headset EEPROM-based RGB programming (distinct wire protocol from mice/keyboards)
+- Basilisk HyperScroll wheel haptic-resistance steps
+- Naga side-button hardware remapping
+- DeathStalker per-row backlight
+- Tartarus keypad layout swapping
+- Per-zone effects on multi-zone mice (logo / scroll / left / right separately — today Tiny Razer drives only the matrix zone)
+
 ## Credits
 
 Protocol reverse-engineering, device IDs and per-device quirks originate from the [openrazer](https://github.com/openrazer/openrazer) Linux driver project. Tiny Razer ports the platform-independent portion of that work to Swift.

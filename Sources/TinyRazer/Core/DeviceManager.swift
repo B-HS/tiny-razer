@@ -218,7 +218,97 @@ final class DeviceManager {
             }
         }
 
+        if device.supports(.brightness) {
+            do {
+                next.brightness = try await device.readBrightness(via: transport)
+            } catch {
+                noteError(error, action: "readBrightness")
+            }
+        }
+
+        if device.supports(.dpiStages) {
+            do {
+                next.dpiStages = try await device.readDPIStages(via: transport)
+            } catch {
+                noteError(error, action: "readDPIStages")
+            }
+        }
+
+        if device.supports(.idleTimer) {
+            do {
+                next.idleTimeSeconds = try await device.readIdleTime(via: transport)
+            } catch {
+                noteError(error, action: "readIdleTime")
+            }
+        }
+
+        if device.supports(.lowBatteryThreshold) {
+            do {
+                next.lowBatteryThresholdPercent = try await device.readLowBatteryThreshold(via: transport)
+            } catch {
+                noteError(error, action: "readLowBatteryThreshold")
+            }
+        }
+
+        // Firmware / serial are universal — always attempt once per device.
+        if next.firmwareVersion == nil {
+            if let fw = try? await device.readFirmwareVersion(via: transport) {
+                next.firmwareVersion = fw
+            }
+        }
+        if next.serialNumber == nil {
+            if let sn = try? await device.readSerialNumber(via: transport) {
+                next.serialNumber = sn
+            }
+        }
+
         return next
+    }
+
+    // MARK: - Action helpers for lighting / stages / idle / threshold
+
+    func setBrightness(_ value: UInt8, for id: UInt64) async {
+        guard let index = devices.firstIndex(where: { $0.id == id }) else { return }
+        let device = devices[index].device
+        do {
+            try await device.writeBrightness(value, via: transport)
+            devices[index].brightness = value
+        } catch { noteError(error, action: "setBrightness") }
+    }
+
+    func setLEDEffect(_ effect: LEDEffect, for id: UInt64) async {
+        guard let index = devices.firstIndex(where: { $0.id == id }) else { return }
+        let device = devices[index].device
+        do {
+            try await device.writeLEDEffect(effect, via: transport)
+        } catch { noteError(error, action: "setLEDEffect") }
+    }
+
+    func setDPIStages(_ stages: [(x: UInt16, y: UInt16)], activeStage: UInt8, for id: UInt64) async {
+        guard let index = devices.firstIndex(where: { $0.id == id }) else { return }
+        let device = devices[index].device
+        do {
+            try await device.writeDPIStages(stages, activeStage: activeStage, via: transport)
+            devices[index].dpiStages = .init(activeStage: activeStage, stages: stages)
+        } catch { noteError(error, action: "setDPIStages") }
+    }
+
+    func setIdleTime(seconds: UInt16, for id: UInt64) async {
+        guard let index = devices.firstIndex(where: { $0.id == id }) else { return }
+        let device = devices[index].device
+        do {
+            try await device.writeIdleTime(seconds: seconds, via: transport)
+            devices[index].idleTimeSeconds = seconds
+        } catch { noteError(error, action: "setIdleTime") }
+    }
+
+    func setLowBatteryThreshold(percent: Int, for id: UInt64) async {
+        guard let index = devices.firstIndex(where: { $0.id == id }) else { return }
+        let device = devices[index].device
+        do {
+            try await device.writeLowBatteryThreshold(percent: percent, via: transport)
+            devices[index].lowBatteryThresholdPercent = percent
+        } catch { noteError(error, action: "setLowBatteryThreshold") }
     }
 
     private func noteError(_ error: Error, action: String) {

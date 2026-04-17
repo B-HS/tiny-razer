@@ -56,26 +56,46 @@ type ResolvedDevice = ParsedClass & {
 }
 
 const METHOD_TO_CAP: Record<string, string> = {
+    // DPI / polling
     set_dpi_xy: '.dpi',
     get_dpi_xy: '.dpi',
     set_dpi_xy_byte: '.dpi',
+    set_dpi_stages: '.dpiStages',
+    get_dpi_stages: '.dpiStages',
     set_poll_rate: '.pollingRate',
     get_poll_rate: '.pollingRate',
     set_poll_rate_ex: '.pollingRateHyper',
     get_poll_rate_ex: '.pollingRateHyper',
+
+    // Battery / power
     get_battery: '.battery',
     is_charging: '.charging',
+    set_idle_time: '.idleTimer',
+    get_idle_time: '.idleTimer',
+    set_low_battery_threshold: '.lowBatteryThreshold',
+    get_low_battery_threshold: '.lowBatteryThreshold',
+
+    // Brightness (classic + per-zone)
     set_brightness: '.brightness',
     get_brightness: '.brightness',
     set_logo_brightness: '.brightness',
+    set_scroll_brightness: '.brightness',
+    set_left_brightness: '.brightness',
+    set_right_brightness: '.brightness',
+    set_backlight_brightness: '.brightness',
+
+    // RGB effects — classic (class 0x03)
     set_static_effect: '.rgbStatic',
     set_logo_static: '.rgbStatic',
+    set_scroll_static: '.rgbStatic',
     set_breath_single_effect: '.rgbBreathe',
     set_breath_dual_effect: '.rgbBreathe',
     set_breath_random_effect: '.rgbBreathe',
     set_logo_breath_single: '.rgbBreathe',
+    set_scroll_breath_single: '.rgbBreathe',
     set_spectrum_effect: '.rgbSpectrum',
     set_logo_spectrum: '.rgbSpectrum',
+    set_scroll_spectrum: '.rgbSpectrum',
     set_wave_effect: '.rgbWave',
     set_logo_wave: '.rgbWave',
     set_wave_effect_extended: '.rgbWave',
@@ -84,8 +104,14 @@ const METHOD_TO_CAP: Record<string, string> = {
     set_starlight_single_effect: '.rgbStarlight',
     set_starlight_dual_effect: '.rgbStarlight',
     set_starlight_random_effect: '.rgbStarlight',
+
+    // Custom per-key frame (keyboard matrix)
     set_key_row: '.customFrame',
     set_custom_effect: '.customFrame',
+
+    // Extended effect path (class 0x0F) — presence of any "logo_*" effect
+    // typically indicates extended routing on modern devices.
+    set_logo_none: '.extendedEffects',
 }
 
 const COMPOUND_NAMES = [
