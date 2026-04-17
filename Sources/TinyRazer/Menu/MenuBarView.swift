@@ -411,13 +411,20 @@ private struct DeviceDetailPane: View {
     }
 
     private var customiseButton: some View {
+        // NSMenu (the SwiftUI Menu backing) caches Toggle checkmark state
+        // across opens and doesn't always refresh when @Observable `revision`
+        // ticks. Rebuild the whole Menu view on every revision change so the
+        // menu items pick up the current visibility state.
         Menu {
             ForEach(preferences.availableFields(for: state.device.descriptor)) { field in
-                Toggle(isOn: Binding(
-                    get: { preferences.isVisible(field, for: state.device.descriptor) },
-                    set: { _ in preferences.toggle(field, for: state.device.descriptor) }
-                )) {
-                    Label(field.title, systemImage: field.systemImage)
+                let isOn = preferences.isVisible(field, for: state.device.descriptor)
+                Button {
+                    preferences.toggle(field, for: state.device.descriptor)
+                } label: {
+                    Label(
+                        "\(isOn ? "✓ " : "    ")\(field.title)",
+                        systemImage: field.systemImage
+                    )
                 }
             }
         } label: {
@@ -427,6 +434,7 @@ private struct DeviceDetailPane: View {
         }
         .menuStyle(.button)
         .buttonStyle(.borderless)
+        .id(preferences.revision)
     }
 
     // MARK: Helpers
