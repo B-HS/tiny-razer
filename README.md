@@ -6,7 +6,7 @@ No Synapse, no daemon, no kernel extension.
 ![Tiny Razer](docs/assets/screenshot.png)
 
 <p align="center">
-  <a href="https://github.com/B-HS/tiny-razer/releases/latest">Download the latest release →</a>
+  <a href="https://github.com/B-HS/tiny-razer/releases/latest">Download</a>
 </p>
 
 ## What it does
