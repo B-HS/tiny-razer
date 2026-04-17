@@ -26,6 +26,7 @@ struct SettingsScene: View {
         }
         .frame(minWidth: 680, minHeight: 440)
         .ignoresSafeArea()
+        .hideMinimiseAndZoomButtons()
         .onChange(of: manager.devices.map(\.id)) { _, ids in
             if case .device(let id) = selection, !ids.contains(id) {
                 selection = .general

@@ -23,4 +23,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             await self.deviceManager.stop()
         }
     }
+
+    /// Tiny Razer is a menu-bar-only app — closing the settings window
+    /// should just hide the window, not terminate the process.
+    nonisolated func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
+    }
 }
