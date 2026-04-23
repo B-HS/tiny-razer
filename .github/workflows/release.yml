@@ -30,9 +30,12 @@ jobs:
   release:
     name: Build & Release
     runs-on: macos-15
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      # Third-party / official actions pinned to commit SHAs to defend
+      # against repo takeover or tag re-pointing on the action side.
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
           fetch-tags: true
@@ -67,11 +70,9 @@ jobs:
           echo "previous=$LATEST" >> "$GITHUB_OUTPUT"
           echo "next=$NEXT" >> "$GITHUB_OUTPUT"
           echo "short=${NEXT#v}" >> "$GITHUB_OUTPUT"
-          echo "Previous: $LATEST"
-          echo "Next:     $NEXT"
 
       - name: Cache SPM
-        uses: actions/cache@v4
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
         with:
           path: .build
           key: ${{ runner.os }}-spm-${{ hashFiles('Package.resolved', 'Package.swift') }}
@@ -81,7 +82,52 @@ jobs:
       - name: Run tests
         run: swift test
 
+      # Import Developer ID cert into a temporary keychain so codesign can
+      # find it. No-op if MACOS_CERTIFICATE secret is empty — the build
+      # then falls back to ad-hoc (still usable, just not notarization-ready).
+      - name: Import signing certificate
+        id: sign
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ github.run_id }}-tmp-keychain
+        run: |
+          if [ -z "$MACOS_CERTIFICATE" ]; then
+            echo "No MACOS_CERTIFICATE secret set; skipping (build will be ad-hoc)."
+            echo "identity=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          CERT_PATH=$RUNNER_TEMP/build_certificate.p12
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+
+          # Decode base64 → .p12. Restrict perms before any other step can
+          # read it; rm with overwrite the moment import completes.
+          echo -n "$MACOS_CERTIFICATE" | base64 --decode -o "$CERT_PATH"
+          chmod 600 "$CERT_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -P "$MACOS_CERTIFICATE_PASSWORD" \
+              -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+              -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH" login.keychain
+
+          # Wipe the decoded .p12 from disk now that the keychain has it.
+          rm -P "$CERT_PATH" 2>/dev/null || rm -f "$CERT_PATH"
+
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" \
+              | grep -o '"Developer ID Application: [^"]*"' | head -n1 | tr -d '"')
+          echo "identity=$IDENTITY" >> "$GITHUB_OUTPUT"
+          # Don't echo the identity to logs — it carries the team ID + name
+          # of the developer account. Public via `codesign -dv` on the
+          # notarized binary anyway, but no need to log it twice.
+
       - name: Build .app bundle
+        env:
+          CODESIGN_IDENTITY: ${{ steps.sign.outputs.identity }}
         run: |
           ./build-app.sh release
 
@@ -90,15 +136,60 @@ jobs:
           APP=".build/Tiny Razer.app"
           plutil -replace CFBundleShortVersionString -string "${{ steps.version.outputs.short }}" "$APP/Contents/Info.plist"
           plutil -replace CFBundleVersion -string "${{ github.run_number }}" "$APP/Contents/Info.plist"
-          codesign --force --deep --sign - "$APP"
+          # Re-sign after modifying Info.plist.
+          IDENTITY="${{ steps.sign.outputs.identity }}"
+          IDENTITY="${IDENTITY:--}"
+          ENTITLEMENTS_ARG=""
+          if [ -f "Resources/TinyRazer.entitlements" ]; then
+            ENTITLEMENTS_ARG="--entitlements Resources/TinyRazer.entitlements"
+          fi
+          codesign --force --deep --options runtime --timestamp \
+              $ENTITLEMENTS_ARG --sign "$IDENTITY" "$APP"
+
+      # Notarization — no-op when Apple credentials aren't configured.
+      # Credentials are stashed in a temporary keychain profile so the
+      # app-specific password never appears on the notarytool command line
+      # (which would otherwise be visible to any concurrent `ps` listing).
+      - name: Notarize
+        env:
+          IDENTITY: ${{ steps.sign.outputs.identity }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          if [ -z "$IDENTITY" ] || [ -z "$APPLE_ID" ]; then
+            echo "Notarization skipped (missing Developer ID cert or Apple credentials)."
+            exit 0
+          fi
+
+          # Persist credentials inside the temp keychain (already on PATH
+          # via the import step). After this, notarytool only needs the
+          # profile name on the command line.
+          xcrun notarytool store-credentials "tiny-razer-ci" \
+              --keychain "$RUNNER_TEMP/app-signing.keychain-db" \
+              --apple-id "$APPLE_ID" \
+              --team-id "$APPLE_TEAM_ID" \
+              --password "$APPLE_APP_PASSWORD"
+
+          APP=".build/Tiny Razer.app"
+          ZIP="$RUNNER_TEMP/notarize.zip"
+          ditto -c -k --keepParent "$APP" "$ZIP"
+
+          xcrun notarytool submit "$ZIP" \
+              --keychain "$RUNNER_TEMP/app-signing.keychain-db" \
+              --keychain-profile "tiny-razer-ci" \
+              --wait
+
+          xcrun stapler staple "$APP"
+          xcrun stapler validate "$APP"
 
       - name: Package .zip
         id: package
         run: |
           cd .build
           ditto -c -k --keepParent "Tiny Razer.app" "TinyRazer-${{ steps.version.outputs.next }}.zip"
-          echo "path=.build/TinyRazer-${{ steps.version.outputs.next }}.zip" >> "$GITHUB_OUTPUT"
-          shasum -a 256 "TinyRazer-${{ steps.version.outputs.next }}.zip" > "TinyRazer-${{ steps.version.outputs.next }}.zip.sha256"
+          shasum -a 256 "TinyRazer-${{ steps.version.outputs.next }}.zip" \
+              > "TinyRazer-${{ steps.version.outputs.next }}.zip.sha256"
 
       - name: Create tag
         run: |
@@ -116,6 +207,10 @@ jobs:
           else
             LOG=$(git log "$PREV"..HEAD --pretty=format:'- %s (%h)' --reverse)
           fi
+          SIGNED_NOTE="ad-hoc signed (right-click → Open on first launch)"
+          if [ -n "${{ steps.sign.outputs.identity }}" ]; then
+            SIGNED_NOTE="Developer ID signed & notarized"
+          fi
           {
             echo "body<<EOF"
             echo "### Changes"
@@ -124,19 +219,13 @@ jobs:
             echo ""
             echo "### Artifacts"
             echo ""
-            echo "- \`TinyRazer-${{ steps.version.outputs.next }}.zip\` — ad-hoc signed macOS .app bundle"
+            echo "- \`TinyRazer-${{ steps.version.outputs.next }}.zip\` — $SIGNED_NOTE"
             echo "- \`.sha256\` — checksum"
-            echo ""
-            echo "### Installation"
-            echo ""
-            echo "1. Download and unzip"
-            echo "2. Move \`Tiny Razer.app\` to \`/Applications\`"
-            echo "3. Right-click → Open (first launch only, to bypass Gatekeeper)"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@c95fe1489396fe8a9eb87c0abf8aa5b2ef267fda # v2.2.1
         with:
           tag_name: ${{ steps.version.outputs.next }}
           name: ${{ steps.version.outputs.next }}
@@ -146,3 +235,11 @@ jobs:
           files: |
             .build/TinyRazer-${{ steps.version.outputs.next }}.zip
             .build/TinyRazer-${{ steps.version.outputs.next }}.zip.sha256
+
+      - name: Clean up keychain + temp files
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/app-signing.keychain-db" 2>/dev/null || true
+          # Belt-and-braces: wipe anything secret-derived left in the temp dir.
+          rm -Pf "$RUNNER_TEMP/build_certificate.p12" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/notarize.zip" 2>/dev/null || true
