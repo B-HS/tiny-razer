@@ -191,13 +191,6 @@ jobs:
           shasum -a 256 "TinyRazer-${{ steps.version.outputs.next }}.zip" \
               > "TinyRazer-${{ steps.version.outputs.next }}.zip.sha256"
 
-      - name: Create tag
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "${{ steps.version.outputs.next }}" -m "Release ${{ steps.version.outputs.next }}"
-          git push origin "${{ steps.version.outputs.next }}"
-
       - name: Generate changelog
         id: changelog
         run: |
