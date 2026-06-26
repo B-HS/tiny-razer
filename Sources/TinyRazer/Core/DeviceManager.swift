@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 import RazerKit
@@ -13,16 +14,19 @@ final class DeviceManager {
     private let transport: HIDTransport
     private var observerTask: Task<Void, Never>?
     private var pollingTasks: [UInt64: Task<Void, Never>] = [:]
+    private var wakeObserver: NSObjectProtocol?
 
     init(transport: HIDTransport = HIDTransport()) {
         self.transport = transport
     }
 
     func start() async {
+        installWakeObserver()
         guard !isRunning else { return }
         do {
             let stream = try await transport.start()
             isRunning = true
+            startupError = nil
             observerTask = Task { [weak self] in
                 for await event in stream {
                     await self?.handle(event: event)
@@ -35,6 +39,7 @@ final class DeviceManager {
     }
 
     func stop() async {
+        removeWakeObserver()
         pollingTasks.values.forEach { $0.cancel() }
         pollingTasks.removeAll()
         observerTask?.cancel()
@@ -42,6 +47,36 @@ final class DeviceManager {
         await transport.stop()
         devices = []
         isRunning = false
+    }
+
+    /// Full teardown + rebuild of the HID transport. The underlying IOHIDManager
+    /// is terminal once cancelled, so recovering after a system sleep/wake (or a
+    /// manual retry) requires a stop()+start() that allocates a fresh manager.
+    func restart() async {
+        await stop()
+        await start()
+    }
+
+    // MARK: - Sleep / wake recovery
+
+    private func installWakeObserver() {
+        guard wakeObserver == nil else { return }
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                Log.manager.info("System woke — rebuilding HID transport")
+                await self?.restart()
+            }
+        }
+    }
+
+    private func removeWakeObserver() {
+        guard let wakeObserver else { return }
+        NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver)
+        self.wakeObserver = nil
     }
 
     // MARK: - Event handling
@@ -56,25 +91,25 @@ final class DeviceManager {
             if devices.contains(where: { $0.id == device.id }) { return }
 
             // Dedupe: a single physical device can appear via two PIDs at
-            // once — e.g. DeathAdder V3 Pro plugged in by USB cable while
-            // its wireless dongle is still attached. Treat same shortName +
-            // category as the same mouse and prefer the wired variant.
+            // once — e.g. DeathAdder V3 Pro plugged in by USB cable while its
+            // wireless dongle is still attached. The catalog gives the wired and
+            // wireless legs different shortNames ("… Wired" / "… Wireless"), so we
+            // match on the normalized modelKey + category and only collapse a
+            // genuine wired+wireless pair, preferring the wired leg.
             if let existingIndex = devices.firstIndex(where: {
-                $0.device.descriptor.shortName == device.descriptor.shortName
+                $0.device.descriptor.modelKey == device.descriptor.modelKey
                     && $0.device.category == device.category
+                    && $0.device.descriptor.isWireless != device.descriptor.isWireless
             }) {
-                let existing = devices[existingIndex].device
-                let newIsWired = !device.descriptor.isWireless
-                let existingIsWired = !existing.descriptor.isWireless
-                if newIsWired && !existingIsWired {
-                    Log.manager.info("Wired \(device.descriptor.shortName, privacy: .public) replaces wireless entry")
-                    pollingTasks[existing.id]?.cancel()
-                    pollingTasks.removeValue(forKey: existing.id)
-                    devices.remove(at: existingIndex)
-                } else {
-                    Log.manager.info("Skipping duplicate \(device.descriptor.shortName, privacy: .public) (already tracked as \(existingIsWired ? "wired" : "wireless", privacy: .public))")
+                if device.descriptor.isWireless {
+                    Log.manager.info("Skipping wireless \(device.descriptor.shortName, privacy: .public) — wired leg already tracked")
                     return
                 }
+                let existing = devices[existingIndex].device
+                Log.manager.info("Wired \(device.descriptor.shortName, privacy: .public) replaces wireless \(existing.descriptor.shortName, privacy: .public)")
+                pollingTasks[existing.id]?.cancel()
+                pollingTasks.removeValue(forKey: existing.id)
+                devices.remove(at: existingIndex)
             }
 
             var state = DeviceState(device: device)
@@ -106,9 +141,12 @@ final class DeviceManager {
         for handle in handles {
             guard let device = RazerDevice.from(handle: handle) else { continue }
             if devices.contains(where: { $0.id == device.id }) { continue }
-            if devices.contains(where: {
-                $0.device.descriptor.shortName == device.descriptor.shortName
+            // A wireless leg stays suppressed only while its wired counterpart is
+            // still tracked; otherwise (wired unplugged) it resurfaces.
+            if device.descriptor.isWireless && devices.contains(where: {
+                $0.device.descriptor.modelKey == device.descriptor.modelKey
                     && $0.device.category == device.category
+                    && !$0.device.descriptor.isWireless
             }) { continue }
 
             Log.manager.info("Resurfacing \(device.descriptor.shortName, privacy: .public) (\(device.descriptor.isWireless ? "wireless" : "wired", privacy: .public))")

@@ -45,4 +45,19 @@ public struct DeviceDescriptor: Sendable, Hashable {
     public func matches(productID: Int) -> Bool {
         productIDs.contains(productID)
     }
+
+    /// Normalized model identity used to recognise the same physical device that
+    /// enumerates under several product IDs — e.g. a wireless mouse seen over both
+    /// its dongle and a USB cable. Trailing connectivity tokens ("Wired",
+    /// "Wireless", "Receiver", "Dongle", "(Alt)") are dropped so the wired and
+    /// wireless variants of one model collapse to the same key. Word-boundary
+    /// based so it never truncates a real model name.
+    public var modelKey: String {
+        let connectivityTokens: Set<String> = ["wired", "wireless", "receiver", "dongle", "(alt)"]
+        var tokens = shortName.split(separator: " ").map(String.init)
+        while let last = tokens.last, connectivityTokens.contains(last.lowercased()) {
+            tokens.removeLast()
+        }
+        return tokens.joined(separator: " ").lowercased()
+    }
 }

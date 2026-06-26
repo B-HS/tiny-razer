@@ -19,7 +19,7 @@ public actor HIDTransport {
 
     public nonisolated let vendorID: Int
 
-    private let manager: IOHIDManager
+    private var manager: IOHIDManager?
     private let queue: DispatchQueue
     private let registry: DeviceRegistry
     private var isStarted = false
@@ -32,7 +32,6 @@ public actor HIDTransport {
 
     public init(vendorID: Int = RazerKit.vendorID) {
         self.vendorID = vendorID
-        self.manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
         self.queue = DispatchQueue(label: "tiny-razer.hid-transport", qos: .userInitiated)
         self.registry = DeviceRegistry()
     }
@@ -50,6 +49,15 @@ public actor HIDTransport {
         }
 
         log.info("Starting IOHIDManager for vendorID 0x\(String(self.vendorID, radix: 16), privacy: .public)")
+
+        // A cancelled IOHIDManager is terminal: the dispatch-queue API models it
+        // on a GCD dispatch source, so cancellation can't be undone and
+        // IOHIDManagerSetDispatchQueue may be called only once. Every start
+        // therefore allocates a brand-new manager instead of reusing a previously
+        // cancelled one — this is what lets restart() / sleep-wake recovery
+        // actually re-detect devices.
+        let manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
+        self.manager = manager
 
         // 1. Make & install the continuation synchronously on the actor.
         let (stream, continuation) = AsyncStream<DeviceEvent>.makeStream(bufferingPolicy: .unbounded)
@@ -95,12 +103,13 @@ public actor HIDTransport {
     }
 
     public func stop() {
-        guard isStarted else { return }
+        guard isStarted, let manager else { return }
         for device in openedDevices {
             IOHIDDeviceClose(device, IOOptionBits(kIOHIDOptionsTypeNone))
         }
         openedDevices.removeAll()
         IOHIDManagerCancel(manager)
+        self.manager = nil
         isStarted = false
         eventContinuation?.finish()
         eventContinuation = nil

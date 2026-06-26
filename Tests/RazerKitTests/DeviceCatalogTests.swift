@@ -62,6 +62,26 @@ struct DeviceCatalogTests {
         #expect(RazerDevice.from(handle: nonRazer) == nil)
     }
 
+    @Test("modelKey collapses wired/wireless/(Alt) variants of one model")
+    func modelKeyCollapsesVariants() {
+        let wired = DeviceCatalog.descriptor(for: 0x00B6)      // DeathAdder V3 Pro Wired
+        let wiredAlt = DeviceCatalog.descriptor(for: 0x00C2)   // DeathAdder V3 Pro Wired (Alt)
+        let wireless = DeviceCatalog.descriptor(for: 0x00B7)   // DeathAdder V3 Pro Wireless
+        #expect(wired?.modelKey == wireless?.modelKey)
+        #expect(wiredAlt?.modelKey == wireless?.modelKey)
+        #expect(wired?.modelKey == "deathadder v3 pro")
+    }
+
+    @Test("modelKey keeps distinct models distinct")
+    func modelKeyDistinguishesModels() {
+        // Same family, different generation qualifiers must not collapse.
+        let v3pro = DeviceCatalog.descriptor(for: 0x00B7)?.modelKey      // DeathAdder V3 Pro Wireless
+        let v2pro = DeviceCatalog.descriptor(for: 0x007C)?.modelKey      // DeathAdder V2 Pro Wired
+        #expect(v3pro == "deathadder v3 pro")
+        #expect(v2pro == "deathadder v2 pro")
+        #expect(v3pro != v2pro)
+    }
+
     @Test("RazerDevice.from accepts a Razer PID that's in the catalog")
     func knownRazerAccepted() {
         let handle = HIDDeviceHandle(
